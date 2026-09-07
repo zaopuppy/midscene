@@ -1,7 +1,15 @@
 import { createHash } from 'node:crypto';
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { dirname, join, relative, sep } from 'node:path';
+import {
+  copyFileSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
+import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import type { CaseRunResult, WorkflowDocumentRunResult } from '../engine/types';
+import { writeTestReportViewer } from './test-report-viewer';
 import type { TestProjectCollectionError, TestProjectRunResult } from './types';
 
 const writeJson = (path: string, value: unknown) => {
@@ -171,11 +179,14 @@ export const writeTestProjectRunResult = (
                   ),
                 ),
                 ...(attempt.reportPaths?.length
-                  ? {
-                      reports: attempt.reportPaths.map((path) =>
-                        relativeToSummary(result.summaryPath, path),
-                      ),
-                    }
+                  ? attempt.status === 'failed'
+                    ? {
+                        reports: archiveFailedReports(
+                          dirname(result.summaryPath),
+                          attempt.reportPaths,
+                        ),
+                      }
+                    : {}
                   : {}),
               })),
             }
@@ -187,11 +198,14 @@ export const writeTestProjectRunResult = (
         status: document.status,
         resultFile: fact(workflowDocumentResultPath(document)),
         ...(document.reportPaths?.length
-          ? {
-              reports: document.reportPaths.map((path) =>
-                relativeToSummary(result.summaryPath, path),
-              ),
-            }
+          ? document.status === 'failed'
+            ? {
+                reports: archiveFailedReports(
+                  dirname(result.summaryPath),
+                  document.reportPaths,
+                ),
+              }
+            : {}
           : {}),
       })),
       collectionErrors: project.collectionErrors.map((error) => ({
@@ -200,4 +214,45 @@ export const writeTestProjectRunResult = (
       })),
     })),
   });
+  writeTestReportViewer(dirname(result.summaryPath));
+};
+
+const isInside = (root: string, path: string): boolean => {
+  const resolvedRoot = resolve(root);
+  const resolvedPath = resolve(path);
+  return (
+    resolvedPath === resolvedRoot ||
+    resolvedPath.startsWith(`${resolvedRoot}${sep}`)
+  );
+};
+
+const archiveFailedReports = (
+  runDir: string,
+  reportPaths: readonly string[] | undefined,
+): string[] | undefined => {
+  if (!reportPaths?.length) return undefined;
+  const reports = reportPaths.flatMap((reportPath) => {
+    if (!existsSync(reportPath)) return [];
+    if (isInside(runDir, reportPath))
+      return [toPosix(relative(runDir, reportPath))];
+
+    const source = resolve(reportPath);
+    const id = createHash('sha256').update(source).digest('hex').slice(0, 16);
+    const destinationDir = join(runDir, 'artifacts', 'reports', id);
+    const destination = join(destinationDir, basename(source));
+    mkdirSync(destinationDir, { recursive: true });
+    if (statSync(source).isDirectory()) {
+      cpSync(source, destination, { recursive: true });
+    } else {
+      copyFileSync(source, destination);
+      const screenshots = join(dirname(source), 'screenshots');
+      if (existsSync(screenshots)) {
+        cpSync(screenshots, join(destinationDir, 'screenshots'), {
+          recursive: true,
+        });
+      }
+    }
+    return [toPosix(relative(runDir, destination))];
+  });
+  return reports.length ? reports : undefined;
 };

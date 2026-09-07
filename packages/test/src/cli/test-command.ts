@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { renderNodeReference } from './node-reference';
 import { loadTestProject } from './test-project';
 import { discoverTestConfig, runTestProject } from './test-project-runner';
+import { startTestReportServer } from './test-report-server';
 
 export interface TestCliIO {
   log(message: string): void;
@@ -11,23 +12,26 @@ export interface TestCliIO {
 }
 
 interface ParsedTestArgs {
-  command?: 'describe-nodes';
+  command?: 'describe-nodes' | 'report';
   cwd: string;
   projectRoot?: string;
   configPath?: string;
   resultDir?: string;
   projectNames?: string[];
+  reportPort?: number;
 }
 
 export const parseTestCliArgs = (
   args: string[],
   cwd = process.cwd(),
 ): ParsedTestArgs => {
-  const command = args[0] === 'describe-nodes' ? args[0] : undefined;
+  const command =
+    args[0] === 'describe-nodes' || args[0] === 'report' ? args[0] : undefined;
   const commandOffset = command ? 1 : 0;
   let projectRoot: string | undefined;
   let configPath: string | undefined;
   let resultDir: string | undefined;
+  let reportPort: number | undefined;
   const projectNames: string[] = [];
 
   for (let index = commandOffset; index < args.length; index += 1) {
@@ -38,12 +42,24 @@ export const parseTestCliArgs = (
       projectRoot = resolve(cwd, arg);
       continue;
     }
-    if (arg === '--config' || arg === '--result-dir' || arg === '--project') {
+    if (
+      arg === '--config' ||
+      arg === '--result-dir' ||
+      arg === '--project' ||
+      arg === '--port'
+    ) {
       const value = args[index + 1];
       if (!value) throw new Error(`${arg} requires a value.`);
       if (arg === '--config') configPath = value;
       else if (arg === '--result-dir') resultDir = resolve(cwd, value);
-      else projectNames.push(value);
+      else if (arg === '--project') projectNames.push(value);
+      else {
+        const port = Number(value);
+        if (!Number.isInteger(port) || port < 0 || port > 65535) {
+          throw new Error('--port requires an integer from 0 to 65535.');
+        }
+        reportPort = port;
+      }
       index += 1;
     } else {
       throw new Error(`Unknown option: ${arg}`);
@@ -56,6 +72,14 @@ export const parseTestCliArgs = (
   if (command === 'describe-nodes' && projectNames.length > 0) {
     throw new Error('--project is not supported by describe-nodes.');
   }
+  if (command === 'report') {
+    if (!projectRoot) {
+      throw new Error('report requires a test run directory.');
+    }
+    if (configPath || resultDir || projectNames.length > 0) {
+      throw new Error('report only supports a run directory and --port.');
+    }
+  }
 
   return {
     ...(command ? { command } : {}),
@@ -64,7 +88,23 @@ export const parseTestCliArgs = (
     configPath,
     resultDir,
     ...(projectNames.length > 0 ? { projectNames } : {}),
+    ...(reportPort === undefined ? {} : { reportPort }),
   };
+};
+
+const report = async (
+  options: ParsedTestArgs,
+  io: TestCliIO,
+): Promise<number> => {
+  const server = await startTestReportServer(
+    options.projectRoot!,
+    options.reportPort,
+  );
+  io.log(`Test report: ${server.url}`);
+  io.log('Press Ctrl+C to stop the report server.');
+  // The listening server keeps the event loop active. Leave Ctrl+C to Node and
+  // the shell's default interrupt handling.
+  return 0;
 };
 
 const defaultCliIO: TestCliIO = {
@@ -116,6 +156,9 @@ export async function runTestCli(
     if (options.command === 'describe-nodes') {
       await describeNodes(options, io);
       return 0;
+    }
+    if (options.command === 'report') {
+      return report(options, io);
     }
     const result = await runTestProject({
       ...options,

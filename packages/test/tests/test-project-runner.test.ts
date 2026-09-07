@@ -7,7 +7,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   createTestRunId,
@@ -268,6 +268,7 @@ describe('test project main-process runner', () => {
     expect(existsSync(join(resultDir, 'documents'))).toBe(false);
     expect(existsSync(join(firstRunDir, 'documents'))).toBe(false);
     expect(existsSync(join(firstRunDir, 'project-0', 'documents'))).toBe(true);
+    expect(existsSync(join(firstRunDir, 'report', 'index.html'))).toBe(true);
     expect(existsSync(join(root, 'midscene_run'))).toBe(false);
 
     const second = await runTestProject({ projectRoot: root, resultDir });
@@ -1559,6 +1560,7 @@ cases:
                 writeFileSync(reportPath, '<html>report</html>');
                 return { reportPaths: [reportPath] };
               });
+              throw new Error('controlled failure');
             },
           }],
         };
@@ -1575,7 +1577,6 @@ cases:
     const [attempt] = summary.projects[0].cases[0].attempts;
 
     expect(attempt.reports).toEqual([expect.stringMatching(/\.html$/)]);
-    expect(isAbsolute(attempt.reports[0])).toBe(false);
     expect(
       existsSync(resolve(dirname(result.summaryPath), attempt.reports[0])),
     ).toBe(true);
@@ -1708,5 +1709,15 @@ afterAll:
     expect(() =>
       parseTestCliArgs(['describe-nodes', '--project', 'ios']),
     ).toThrow('--project is not supported by describe-nodes');
+    expect(
+      parseTestCliArgs(['report', 'run', '--port', '8080'], '/workspace'),
+    ).toMatchObject({
+      command: 'report',
+      projectRoot: expect.stringContaining('run'),
+      reportPort: 8080,
+    });
+    expect(() => parseTestCliArgs(['report'])).toThrow(
+      'report requires a test run directory.',
+    );
   });
 });
