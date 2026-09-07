@@ -237,7 +237,7 @@ describe('test project main-process runner', () => {
     const [attempt] = caseResult.attempts;
 
     expect(summary).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 4,
       runId: first.runId,
       factsRoot: '.',
       projects: [{ projectId: 'project-0' }],
@@ -343,7 +343,7 @@ describe('test project main-process runner', () => {
     expect(result.cases[0].sourcePath).toBe('selected/run.yaml');
     const projectResult = JSON.parse(readFileSync(result.summaryPath, 'utf8'));
     expect(projectResult).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 4,
       projectRoot: configuredRoot,
       projects: [
         {
@@ -564,7 +564,7 @@ cases:
 
     const projectResult = JSON.parse(readFileSync(result.summaryPath, 'utf8'));
     expect(projectResult).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 4,
       status: 'failed',
       summary: result.summary,
       projects: [
@@ -1547,6 +1547,7 @@ cases:
         import { dirname, join } from 'node:path';
         const state = globalThis.__testProjectRunnerState;
         export default {
+          projects: [{ name: 'web', platform: 'web', retry: 1 }],
           nodes: [{
             name: 'report',
             execute({ case: caseContext, onTeardown }) {
@@ -1574,12 +1575,150 @@ cases:
 
     const result = await runTestProject({ projectRoot: root, resultDir });
     const summary = JSON.parse(readFileSync(result.summaryPath, 'utf8'));
+    const attempts = summary.projects[0].cases[0].attempts;
+
+    expect(attempts).toHaveLength(2);
+    for (const attempt of attempts) {
+      expect(attempt.reports).toEqual([
+        {
+          reportId: 'report-0',
+          name: expect.stringMatching(/\.html$/),
+          path: expect.stringMatching(/\.html$/),
+        },
+      ]);
+      expect(
+        existsSync(
+          resolve(dirname(result.summaryPath), attempt.reports[0].path),
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it('archives reports for successful attempts', async () => {
+    const root = createProject();
+    const resultDir = join(root, 'results');
+    setRunnerState(resultDir);
+    writeFileSync(
+      join(root, 'midscene.config.ts'),
+      `
+        import { mkdirSync, writeFileSync } from 'node:fs';
+        import { dirname, join } from 'node:path';
+        const state = globalThis.__testProjectRunnerState;
+        export default {
+          nodes: [{
+            name: 'report',
+            execute({ case: caseContext, onTeardown }) {
+              const reportPath = join(state.resultDir, 'reports', caseContext.runId + '.html');
+              onTeardown(() => {
+                mkdirSync(dirname(reportPath), { recursive: true });
+                writeFileSync(reportPath, '<html>successful report</html>');
+                return { reportPaths: [reportPath] };
+              });
+            },
+          }],
+        };
+      `,
+    );
+    writeWorkflow(
+      root,
+      'report.yaml',
+      'cases: [{ name: report, steps: [{ report: create }] }]',
+    );
+
+    const result = await runTestProject({ projectRoot: root, resultDir });
+    const summary = JSON.parse(readFileSync(result.summaryPath, 'utf8'));
     const [attempt] = summary.projects[0].cases[0].attempts;
 
-    expect(attempt.reports).toEqual([expect.stringMatching(/\.html$/)]);
+    expect(result.status).toBe('success');
+    expect(attempt.reports).toEqual([
+      expect.objectContaining({
+        reportId: 'report-0',
+        path: expect.stringMatching(/\.html$/),
+      }),
+    ]);
     expect(
-      existsSync(resolve(dirname(result.summaryPath), attempt.reports[0])),
+      readFileSync(
+        resolve(dirname(result.summaryPath), attempt.reports[0].path),
+        'utf8',
+      ),
+    ).toContain('successful report');
+  });
+
+  it('archives document-scope reports', async () => {
+    const root = createProject();
+    const resultDir = join(root, 'results');
+    setRunnerState(resultDir);
+    writeFileSync(
+      join(root, 'midscene.config.ts'),
+      `
+        import { mkdirSync, writeFileSync } from 'node:fs';
+        import { dirname, join } from 'node:path';
+        const state = globalThis.__testProjectRunnerState;
+        export default {
+          nodes: [{
+            name: 'document.report',
+            execute({ document, onTeardown }) {
+              const reportPath = join(state.resultDir, 'reports', document.documentRunId + '.html');
+              onTeardown(() => {
+                mkdirSync(dirname(reportPath), { recursive: true });
+                writeFileSync(reportPath, '<html>document report</html>');
+                return { reportPaths: [reportPath] };
+              });
+            },
+          }, { name: 'noop', execute() {} }],
+        };
+      `,
+    );
+    writeWorkflow(
+      root,
+      'report.yaml',
+      'beforeAll: [{ document.report: create }]\ncases: [{ name: case, steps: [{ noop: run }] }]',
+    );
+
+    const result = await runTestProject({ projectRoot: root, resultDir });
+    const summary = JSON.parse(readFileSync(result.summaryPath, 'utf8'));
+    const [documentResult] = summary.projects[0].documents;
+
+    expect(documentResult.reports).toEqual([
+      expect.objectContaining({ reportId: 'report-0' }),
+    ]);
+    expect(
+      existsSync(
+        resolve(dirname(result.summaryPath), documentResult.reports[0].path),
+      ),
     ).toBe(true);
+  });
+
+  it('rejects a report path that teardown promised but did not create', async () => {
+    const root = createProject();
+    const resultDir = join(root, 'results');
+    setRunnerState(resultDir);
+    writeFileSync(
+      join(root, 'midscene.config.ts'),
+      `
+        import { join } from 'node:path';
+        const state = globalThis.__testProjectRunnerState;
+        export default {
+          nodes: [{
+            name: 'missing.report',
+            execute({ onTeardown }) {
+              onTeardown(() => ({
+                reportPaths: [join(state.resultDir, 'missing-report.html')],
+              }));
+            },
+          }],
+        };
+      `,
+    );
+    writeWorkflow(
+      root,
+      'report.yaml',
+      'cases: [{ name: report, steps: [{ missing.report: create }] }]',
+    );
+
+    await expect(
+      runTestProject({ projectRoot: root, resultDir }),
+    ).rejects.toThrow('Report artifact does not exist');
   });
 
   it('marks every case not run when beforeAll fails and still cleans up', async () => {

@@ -108,11 +108,88 @@ export interface TestProjectResultFileOptions {
   result: TestProjectRunResult;
 }
 
+interface ArchivedReport {
+  reportId: string;
+  name: string;
+  path: string;
+}
+
+const reportEntryPath = (path: string): string => {
+  const source = resolve(path);
+  if (!existsSync(source)) {
+    throw new Error(`Report artifact does not exist: ${source}`);
+  }
+  if (!statSync(source).isDirectory()) return source;
+
+  const entry = join(source, 'index.html');
+  if (!existsSync(entry) || !statSync(entry).isFile()) {
+    throw new Error(`Report directory does not contain index.html: ${source}`);
+  }
+  return entry;
+};
+
+const createReportArchiver = (runDir: string) => {
+  const copiedRoots = new Map<string, string>();
+
+  const archiveSource = (reportPath: string): string => {
+    const source = resolve(reportPath);
+    const entry = reportEntryPath(source);
+    if (isInside(runDir, entry)) return toPosix(relative(runDir, entry));
+
+    const sourceIsDirectory = statSync(source).isDirectory();
+    const sourceRoot = sourceIsDirectory ? source : dirname(source);
+    let destinationRoot = copiedRoots.get(sourceRoot);
+    if (!destinationRoot) {
+      const id = createHash('sha256')
+        .update(sourceRoot)
+        .digest('hex')
+        .slice(0, 16);
+      destinationRoot = join(runDir, 'artifacts', 'reports', id);
+      mkdirSync(destinationRoot, { recursive: true });
+      copiedRoots.set(sourceRoot, destinationRoot);
+
+      if (sourceIsDirectory) {
+        cpSync(sourceRoot, destinationRoot, { recursive: true });
+      } else {
+        const screenshots = join(sourceRoot, 'screenshots');
+        if (existsSync(screenshots)) {
+          cpSync(screenshots, join(destinationRoot, 'screenshots'), {
+            recursive: true,
+          });
+        }
+      }
+    }
+
+    const destination = sourceIsDirectory
+      ? join(destinationRoot, 'index.html')
+      : join(destinationRoot, basename(entry));
+    if (!sourceIsDirectory && !existsSync(destination)) {
+      copyFileSync(entry, destination);
+    }
+    return toPosix(relative(runDir, destination));
+  };
+
+  return (
+    reportPaths: readonly string[] | undefined,
+  ): ArchivedReport[] | undefined => {
+    if (!reportPaths?.length) return undefined;
+    return reportPaths.map((reportPath, index) => {
+      const entry = reportEntryPath(reportPath);
+      return {
+        reportId: `report-${index}`,
+        name: basename(entry),
+        path: archiveSource(reportPath),
+      };
+    });
+  };
+};
+
 export const writeTestProjectRunResult = (
   options: TestProjectResultFileOptions,
 ) => {
   const { result } = options;
   const fact = (path: string) => toPosix(path);
+  const archiveReports = createReportArchiver(dirname(result.summaryPath));
 
   writeJson(result.summaryPath, {
     schemaVersion: result.schemaVersion,
@@ -179,14 +256,7 @@ export const writeTestProjectRunResult = (
                   ),
                 ),
                 ...(attempt.reportPaths?.length
-                  ? attempt.status === 'failed'
-                    ? {
-                        reports: archiveFailedReports(
-                          dirname(result.summaryPath),
-                          attempt.reportPaths,
-                        ),
-                      }
-                    : {}
+                  ? { reports: archiveReports(attempt.reportPaths) }
                   : {}),
               })),
             }
@@ -198,14 +268,7 @@ export const writeTestProjectRunResult = (
         status: document.status,
         resultFile: fact(workflowDocumentResultPath(document)),
         ...(document.reportPaths?.length
-          ? document.status === 'failed'
-            ? {
-                reports: archiveFailedReports(
-                  dirname(result.summaryPath),
-                  document.reportPaths,
-                ),
-              }
-            : {}
+          ? { reports: archiveReports(document.reportPaths) }
           : {}),
       })),
       collectionErrors: project.collectionErrors.map((error) => ({
@@ -224,35 +287,4 @@ const isInside = (root: string, path: string): boolean => {
     resolvedPath === resolvedRoot ||
     resolvedPath.startsWith(`${resolvedRoot}${sep}`)
   );
-};
-
-const archiveFailedReports = (
-  runDir: string,
-  reportPaths: readonly string[] | undefined,
-): string[] | undefined => {
-  if (!reportPaths?.length) return undefined;
-  const reports = reportPaths.flatMap((reportPath) => {
-    if (!existsSync(reportPath)) return [];
-    if (isInside(runDir, reportPath))
-      return [toPosix(relative(runDir, reportPath))];
-
-    const source = resolve(reportPath);
-    const id = createHash('sha256').update(source).digest('hex').slice(0, 16);
-    const destinationDir = join(runDir, 'artifacts', 'reports', id);
-    const destination = join(destinationDir, basename(source));
-    mkdirSync(destinationDir, { recursive: true });
-    if (statSync(source).isDirectory()) {
-      cpSync(source, destination, { recursive: true });
-    } else {
-      copyFileSync(source, destination);
-      const screenshots = join(dirname(source), 'screenshots');
-      if (existsSync(screenshots)) {
-        cpSync(screenshots, join(destinationDir, 'screenshots'), {
-          recursive: true,
-        });
-      }
-    }
-    return [toPosix(relative(runDir, destination))];
-  });
-  return reports.length ? reports : undefined;
 };

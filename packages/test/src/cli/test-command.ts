@@ -1,9 +1,10 @@
 import { existsSync, statSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { renderNodeReference } from './node-reference';
 import { loadTestProject } from './test-project';
 import { discoverTestConfig, runTestProject } from './test-project-runner';
 import { startTestReportServer } from './test-report-server';
+import { writeTestReportViewer } from './test-report-viewer';
 
 export interface TestCliIO {
   log(message: string): void;
@@ -96,6 +97,7 @@ const report = async (
   options: ParsedTestArgs,
   io: TestCliIO,
 ): Promise<number> => {
+  writeTestReportViewer(options.projectRoot!);
   const server = await startTestReportServer(
     options.projectRoot!,
     options.reportPort,
@@ -169,6 +171,9 @@ export async function runTestCli(
     );
     io.log(`Results: ${result.resultDir}`);
     io.log(`Summary: ${result.summaryPath}`);
+    io.log(
+      `Report: midscene-test report ${JSON.stringify(dirname(result.summaryPath))}`,
+    );
     return result.exitCode;
   } catch (error) {
     io.error(error instanceof Error ? error.message : String(error));

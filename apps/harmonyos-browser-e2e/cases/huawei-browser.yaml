@@ -1,0 +1,75 @@
+beforeAll:
+  - launch:
+      uri: ${browserBundle}
+  - wait:
+      duration: 3
+      unit: s
+  - aiAct: 关闭华为浏览器可能弹出的隐私协议、权限、登录、青少年模式或设为默认浏览器弹窗。如果没有弹窗，不要点击其他内容。
+
+beforeEach:
+  - launch:
+      uri: ${browserBundle}
+  - wait:
+      duration: 1
+      unit: s
+  - aiAct: 如果当前不在浏览器首页，点击底部导航栏的「首页」。关闭可能挡住页面的弹窗。不要打开新网页。
+
+cases:
+  - name: 浏览器首页展示地址栏和频道
+    tags: [smoke, browser]
+    steps:
+      - aiAssert:
+          prompt: 当前是华为浏览器首页。顶部有搜索框或地址栏，下方有「推荐」等频道，底部有「首页」「视频」「好物」「我的」导航。
+          message: 华为浏览器首页未展示地址栏或频道导航
+
+  - name: 通过地址栏打开网页
+    tags: [smoke, browser]
+    steps:
+      - aiAct:
+          prompt: 点击顶部搜索框或地址栏，输入 https://example.com 并前往该网站，不要把它当成关键词搜索。
+          $:
+            timeout: 180000
+      - wait:
+          duration: 3
+          unit: s
+      - aiAssert:
+          prompt: 页面主体显示 Example Domain，说明已经打开 example.com。
+          message: 未能打开 example.com 或页面未显示 Example Domain
+
+  - name: 打开标签页管理
+    tags: [browser]
+    steps:
+      - aiAct: 点击搜索框右侧显示当前标签数量的圆形按钮，打开标签页管理。
+      - aiAssert:
+          prompt: 屏幕上出现标签页列表、缩略图或「新建标签页」入口。
+          message: 没有打开标签页管理页
+
+  - name: 切换到视界频道
+    tags: [browser]
+    steps:
+      - aiAct: 点击频道栏中的「视界」。
+      - aiAssert:
+          prompt: 「视界」处于选中状态，页面内容已经切换到视界频道，不再只显示原来的推荐信息流。
+          message: 未能切换到视界频道
+
+  - name: 向下滚动推荐信息流
+    tags: [browser]
+    steps:
+      - aiAct: 在推荐信息流区域向下滚动一屏，不要点击任何新闻。
+      - aiAssert:
+          prompt: 页面已经离开顶部，可以看到更多新闻或信息流内容。
+          message: 推荐信息流没有发生滚动
+
+  - name: 打开底部我的页面
+    tags: [browser]
+    steps:
+      - aiAct: 点击底部导航栏的「我的」。
+      - aiAssert:
+          prompt: 页面切换到「我的」个人中心，可以看到收藏、历史、下载或设置等入口。
+          message: 未能打开浏览器「我的」页面
+
+afterAll:
+  - terminate:
+      uri: ${browserBundle}
+      $:
+        continue-on-error: true

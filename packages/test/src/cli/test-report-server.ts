@@ -10,6 +10,8 @@ const contentTypeFor = (path: string): string => {
   if (path.endsWith('.svg')) return 'image/svg+xml';
   if (path.endsWith('.png')) return 'image/png';
   if (path.endsWith('.webp')) return 'image/webp';
+  if (path.endsWith('.jpg') || path.endsWith('.jpeg')) return 'image/jpeg';
+  if (path.endsWith('.gif')) return 'image/gif';
   return 'application/octet-stream';
 };
 
@@ -35,11 +37,15 @@ export const startTestReportServer = async (
       .pathname;
     const relativePath =
       requestPath === '/' ? '/report/index.html' : requestPath;
-    const filePath = resolve(root, `.${relativePath}`);
-    if (filePath !== root && !filePath.startsWith(`${root}${sep}`)) {
+    const requestedPath = resolve(root, `.${relativePath}`);
+    if (requestedPath !== root && !requestedPath.startsWith(`${root}${sep}`)) {
       response.writeHead(403).end('Forbidden');
       return;
     }
+    const filePath =
+      existsSync(requestedPath) && statSync(requestedPath).isDirectory()
+        ? resolve(requestedPath, 'index.html')
+        : requestedPath;
     if (!existsSync(filePath) || !statSync(filePath).isFile()) {
       response.writeHead(404).end('Not found');
       return;
@@ -48,7 +54,9 @@ export const startTestReportServer = async (
       'Content-Type': contentTypeFor(filePath),
       'Cache-Control': 'no-store',
     });
-    response.end(readFileSync(filePath));
+    response.end(
+      request.method === 'HEAD' ? undefined : readFileSync(filePath),
+    );
   });
 
   await new Promise<void>((resolveReady, rejectReady) => {

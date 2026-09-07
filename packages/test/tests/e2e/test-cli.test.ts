@@ -151,6 +151,9 @@ describe('midscene-test CLI', () => {
     expect(documentResultFiles(runDir)).toHaveLength(2);
     expect(existsSync(summaryPathFor(resultDir))).toBe(true);
     expect(execution.stdout).toContain(`Summary: ${summaryPathFor(resultDir)}`);
+    expect(execution.stdout).toContain(
+      `Report: midscene-test report ${JSON.stringify(runDir)}`,
+    );
     expect(existsSync(join(resultDir, 'project.json'))).toBe(false);
     expect(existsSync(join(resultDir, 'manifest.json'))).toBe(false);
     expect(existsSync(join(resultDir, 'rstest-tests'))).toBe(false);
@@ -159,7 +162,7 @@ describe('midscene-test CLI', () => {
       readFileSync(summaryPathFor(resultDir), 'utf8'),
     );
     expect(projectResult).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 4,
       runId: basename(runDir),
       factsRoot: '.',
       status: 'success',

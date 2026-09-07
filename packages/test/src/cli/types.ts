@@ -50,7 +50,7 @@ export interface TestExecutionProjectRunResult {
 }
 
 export interface TestProjectRunResult {
-  schemaVersion: 3;
+  schemaVersion: 4;
   runId: string;
   startedAt: string;
   endedAt: string;

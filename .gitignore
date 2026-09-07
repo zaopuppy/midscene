@@ -148,7 +148,8 @@ packages/all-in-one-playground/static/*
 .rslib
 **/.rslib
 **/.native-build/
-/docs/
+/docs/*
+!/docs/test-runner-report-architecture.md
 
 # jetbrains
 .idea/

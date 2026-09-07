@@ -720,7 +720,7 @@ export async function runTestProject(
     summary.projectFailures > 0;
   const endedAt = new Date();
   const result: TestProjectRunResult = {
-    schemaVersion: 3,
+    schemaVersion: 4,
     runId,
     startedAt: startedAt.toISOString(),
     endedAt: endedAt.toISOString(),
